@@ -4,37 +4,52 @@ const { createProxyMiddleware } = require("http-proxy-middleware");
 const app = express();
 
 try {
-  // 创建一个代理中间件，将以 /photos 开头的请求代理到目标地址
+  // 跟踪活动代理请求
+  const activeProxyRequests = new Map();
+
   const apiProxy = createProxyMiddleware({
     target: "https://api.siliconflow.cn/v1/",
-    changeOrigin: true, // 设置更改请求头中的 Origin
+    changeOrigin: true,
     pathRewrite: {
       "^/siliconflow": "",
     },
-    onProxyRes: function (proxyRes, req, res) {
-      // 修改响应头信息，隐藏跳转细节
+    // 关键配置
+    ws: true, // 启用WebSocket支持，增强事件处理
+    onProxyReq: (proxyReq, req, res) => {
+      // 保存代理请求，以便稍后中止
+      activeProxyRequests.set(req, proxyReq);
+
+      // 当客户端连接关闭时，中断代理请求
+      req.on("close", () => {
+        if (activeRequests.has(req)) {
+          const upstreamReq = activeRequests.get(req);
+          upstreamReq.abort(); // 主动中断上游请求
+          activeRequests.delete(req);
+        }
+      });
+    },
+    onProxyRes: (proxyRes, req, res) => {
+      // 代理响应完成后清理
+      proxyRes.on("end", () => {
+        activeProxyRequests.delete(req);
+      });
+    },
+    onError: (err, req, res) => {
+      console.error("代理错误:", err);
+      activeProxyRequests.delete(req);
+      if (!res.headersSent) {
+        res.writeHead(500, { "Content-Type": "text/plain" });
+        res.end("代理请求失败");
+      }
     },
   });
 
-  // 使用代理中间件来处理以 /photos 开头的请求
   app.use("/siliconflow", apiProxy);
 
-  // 根目录路由处理函数，输出当前时间
-  app.get("/", (req, res) => {
-    const currentTime = new Date().toLocaleString(); // 获取当前时间
-    res.send(`Current time is: ${currentTime}`); // 返回当前时间到客户端
-  });
-
-  // 根目录路由处理函数，输出当前时间
-  app.post("/", (req, res) => {
-    const currentTime = new Date().toLocaleString(); // 获取当前时间
-    res.send(`Current time is: ${currentTime}`); // 返回当前时间到客户端
-  });
-
-  app.listen(80, () => {
+  app.listen(3000, () => {
     console.log("启动成功");
   });
 } catch (error) {
   console.error("Failed to start application:", error);
-  process.exit(1); // 退出应用并返回非零状态码
+  process.exit(1);
 }
